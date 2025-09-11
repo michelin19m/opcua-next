@@ -3,3 +3,8 @@ pandas
 pyarrow
 typer[all]
 python-dotenv
+cryptography
+fastapi
+uvicorn
+jinja2
+websockets

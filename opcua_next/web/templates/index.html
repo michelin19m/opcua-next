@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OPC UA Next - Web UI</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            padding: 20px;
+        }
+        h1 {
+            color: #333;
+            border-bottom: 2px solid #007acc;
+            padding-bottom: 10px;
+        }
+        .section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .form-group {
+            margin: 10px 0;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input, select, button {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        button {
+            background-color: #007acc;
+            color: white;
+            border: none;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+        button:hover {
+            background-color: #005a99;
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        .status.connected {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .status.disconnected {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .node-tree {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 4px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .node-item {
+            margin: 5px 0;
+            padding: 5px;
+            background: white;
+            border-radius: 3px;
+            border-left: 3px solid #007acc;
+        }
+        .node-id {
+            font-family: monospace;
+            font-size: 12px;
+            color: #666;
+        }
+        .data-stream {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 4px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .data-item {
+            padding: 5px;
+            border-bottom: 1px solid #eee;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>OPC UA Next - Web UI</h1>
+        
+        <!-- Connection Section -->
+        <div class="section">
+            <h3>Connection</h3>
+            <div class="form-group">
+                <label for="endpoint">OPC UA Endpoint:</label>
+                <input type="text" id="endpoint" placeholder="opc.tcp://localhost:4840" value="opc.tcp://localhost:4840">
+            </div>
+            <button onclick="connect()">Connect</button>
+            <button onclick="disconnect()">Disconnect</button>
+            <div id="connectionStatus" class="status disconnected">Disconnected</div>
+        </div>
+
+        <!-- Browse Section -->
+        <div class="section">
+            <h3>Browse Nodes</h3>
+            <div class="form-group">
+                <label for="depth">Depth:</label>
+                <select id="depth">
+                    <option value="1">1</option>
+                    <option value="2">2</option>
+                    <option value="3">3</option>
+                </select>
+            </div>
+            <button onclick="browseNodes()" id="browseBtn" disabled>Browse</button>
+            <div id="nodeTree" class="node-tree" style="display: none;">
+                <h4>Nodes:</h4>
+                <div id="nodeList"></div>
+            </div>
+        </div>
+
+        <!-- Read/Write Section -->
+        <div class="section">
+            <h3>Read/Write</h3>
+            <div class="form-group">
+                <label for="readNodeId">Node ID:</label>
+                <input type="text" id="readNodeId" placeholder="ns=2;i=1">
+            </div>
+            <button onclick="readNode()" id="readBtn" disabled>Read</button>
+            <div class="form-group">
+                <label for="writeValue">Value:</label>
+                <input type="text" id="writeValue" placeholder="Enter value">
+            </div>
+            <button onclick="writeNode()" id="writeBtn" disabled>Write</button>
+            <div id="readResult"></div>
+        </div>
+
+        <!-- Data Stream Section -->
+        <div class="section">
+            <h3>Real-time Data</h3>
+            <button onclick="toggleDataStream()" id="streamBtn" disabled>Start Stream</button>
+            <div id="dataStream" class="data-stream" style="display: none;">
+                <h4>Live Data:</h4>
+                <div id="dataList"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+        let streaming = false;
+
+        // Connection functions
+        async function connect() {
+            const endpoint = document.getElementById('endpoint').value;
+            if (!endpoint) {
+                showError('Please enter an endpoint');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/connect', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({endpoint: endpoint})
+                });
+
+                if (response.ok) {
+                    updateConnectionStatus(true);
+                    enableControls();
+                } else {
+                    const error = await response.json();
+                    showError('Connection failed: ' + error.detail);
+                }
+            } catch (error) {
+                showError('Connection error: ' + error.message);
+            }
+        }
+
+        async function disconnect() {
+            try {
+                await fetch('/api/disconnect', {method: 'POST'});
+                updateConnectionStatus(false);
+                disableControls();
+                if (ws) {
+                    ws.close();
+                    ws = null;
+                }
+            } catch (error) {
+                showError('Disconnect error: ' + error.message);
+            }
+        }
+
+        async function checkStatus() {
+            try {
+                const response = await fetch('/api/status');
+                const status = await response.json();
+                updateConnectionStatus(status.status === 'connected');
+                if (status.status === 'connected') {
+                    enableControls();
+                } else {
+                    disableControls();
+                }
+            } catch (error) {
+                console.error('Status check error:', error);
+            }
+        }
+
+        function updateConnectionStatus(connected) {
+            const statusDiv = document.getElementById('connectionStatus');
+            if (connected) {
+                statusDiv.className = 'status connected';
+                statusDiv.textContent = 'Connected';
+            } else {
+                statusDiv.className = 'status disconnected';
+                statusDiv.textContent = 'Disconnected';
+            }
+        }
+
+        function enableControls() {
+            document.getElementById('browseBtn').disabled = false;
+            document.getElementById('readBtn').disabled = false;
+            document.getElementById('writeBtn').disabled = false;
+            document.getElementById('streamBtn').disabled = false;
+        }
+
+        function disableControls() {
+            document.getElementById('browseBtn').disabled = true;
+            document.getElementById('readBtn').disabled = true;
+            document.getElementById('writeBtn').disabled = true;
+            document.getElementById('streamBtn').disabled = true;
+        }
+
+        // Browse functions
+        async function browseNodes() {
+            const depth = document.getElementById('depth').value;
+            try {
+                const response = await fetch(`/api/browse?depth=${depth}`);
+                const data = await response.json();
+                displayNodes(data.nodes);
+            } catch (error) {
+                showError('Browse error: ' + error.message);
+            }
+        }
+
+        function displayNodes(nodes, container = null, level = 0) {
+            if (!container) {
+                container = document.getElementById('nodeList');
+                container.innerHTML = '';
+                document.getElementById('nodeTree').style.display = 'block';
+            }
+
+            nodes.forEach(node => {
+                const nodeDiv = document.createElement('div');
+                nodeDiv.className = 'node-item';
+                nodeDiv.style.marginLeft = (level * 20) + 'px';
+                
+                nodeDiv.innerHTML = `
+                    <div><strong>${node.browse_name}</strong></div>
+                    <div class="node-id">${node.nodeid}</div>
+                `;
+                
+                container.appendChild(nodeDiv);
+
+                if (node.children && node.children.length > 0) {
+                    displayNodes(node.children, container, level + 1);
+                }
+            });
+        }
+
+        // Read/Write functions
+        async function readNode() {
+            const nodeId = document.getElementById('readNodeId').value;
+            if (!nodeId) {
+                showError('Please enter a node ID');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/read', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({node_id: nodeId})
+                });
+
+                const data = await response.json();
+                document.getElementById('readResult').innerHTML = 
+                    `<div class="status connected">${nodeId}: ${JSON.stringify(data.value)}</div>`;
+            } catch (error) {
+                showError('Read error: ' + error.message);
+            }
+        }
+
+        async function writeNode() {
+            const nodeId = document.getElementById('readNodeId').value;
+            const value = document.getElementById('writeValue').value;
+            
+            if (!nodeId || !value) {
+                showError('Please enter both node ID and value');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/write', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({node_id: nodeId, value: value})
+                });
+
+                const data = await response.json();
+                document.getElementById('readResult').innerHTML = 
+                    `<div class="status connected">Written: ${JSON.stringify(data.value)} to ${nodeId}</div>`;
+            } catch (error) {
+                showError('Write error: ' + error.message);
+            }
+        }
+
+        // Data stream functions
+        function toggleDataStream() {
+            if (!streaming) {
+                startDataStream();
+            } else {
+                stopDataStream();
+            }
+        }
+
+        function startDataStream() {
+            if (ws) {
+                ws.close();
+            }
+
+            ws = new WebSocket('ws://localhost:8000/ws');
+            
+            ws.onopen = function() {
+                streaming = true;
+                document.getElementById('streamBtn').textContent = 'Stop Stream';
+                document.getElementById('dataStream').style.display = 'block';
+                document.getElementById('dataList').innerHTML = '<div>Connected to data stream...</div>';
+            };
+
+            ws.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                if (data.type === 'data_change') {
+                    addDataItem(data);
+                }
+            };
+
+            ws.onclose = function() {
+                streaming = false;
+                document.getElementById('streamBtn').textContent = 'Start Stream';
+            };
+        }
+
+        function stopDataStream() {
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+            streaming = false;
+            document.getElementById('streamBtn').textContent = 'Start Stream';
+        }
+
+        function addDataItem(data) {
+            const dataList = document.getElementById('dataList');
+            const item = document.createElement('div');
+            item.className = 'data-item';
+            item.innerHTML = `${new Date(data.timestamp * 1000).toLocaleTimeString()} - ${data.node_id}: ${JSON.stringify(data.value)}`;
+            dataList.insertBefore(item, dataList.firstChild);
+            
+            // Keep only last 50 items
+            while (dataList.children.length > 50) {
+                dataList.removeChild(dataList.lastChild);
+            }
+        }
+
+        function showError(message) {
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'error';
+            errorDiv.textContent = message;
+            document.body.insertBefore(errorDiv, document.body.firstChild);
+            
+            setTimeout(() => {
+                errorDiv.remove();
+            }, 5000);
+        }
+
+        // Initialize
+        checkStatus();
+        setInterval(checkStatus, 5000); // Check status every 5 seconds
+    </script>
+</body>
+</html>

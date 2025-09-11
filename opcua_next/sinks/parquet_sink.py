@@ -2,6 +2,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 from pathlib import Path
+from typing import List, Dict
 
 
 class ParquetSink:
@@ -9,7 +10,7 @@ class ParquetSink:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
-    def write_records(self, records: list[dict]):
+    def write_records(self, records: List[Dict]):
         if not records:
             return
         df = pd.DataFrame(records)

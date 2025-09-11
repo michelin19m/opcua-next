@@ -3,7 +3,8 @@
 import logging
 import threading
 import time
-from typing import List
+from contextlib import contextmanager
+from typing import List, Dict, Optional, Union, Callable
 
 from opcua import Client
 
@@ -31,14 +32,18 @@ class _SubHandler:
 
 
 class PythonOpcUaDriver(BaseDriver):
-    def __init__(self, endpoint: str, security: dict | None = None, timeout: int = 4):
+    def __init__(self, endpoint: str, security: Optional[Dict] = None, timeout: int = 4, auto_reconnect: bool = True):
         super().__init__(endpoint)
         self.security = security
-        self._client: Client | None = None
+        self.timeout = timeout
+        self.auto_reconnect = auto_reconnect
+        self._client: Optional[Client] = None
         self._lock = threading.RLock()
         self._connected = False
+        self._reconnect_thread: Optional[threading.Thread] = None
+        self._stop_reconnect = threading.Event()
 
-    def connect(self) -> None:
+    def _connect(self) -> None:
         with self._lock:
             if self._client is not None:
                 try:
@@ -47,6 +52,7 @@ class PythonOpcUaDriver(BaseDriver):
                     pass
 
             self._client = Client(self.endpoint)
+            # self._client.set_session_timeout(self.timeout * 1000)  # Convert to milliseconds
 
             # Basic convenience: support security dict {policy, cert, key}
             if self.security:
@@ -64,9 +70,18 @@ class PythonOpcUaDriver(BaseDriver):
             # Attempt connect
             self._client.connect()
             self._connected = True
+            
+            # Start auto-reconnect thread if enabled
+            if self.auto_reconnect:
+                self._start_reconnect_thread()
 
-    def disconnect(self) -> None:
+    def _disconnect(self) -> None:
         with self._lock:
+            # Stop reconnect thread
+            self._stop_reconnect.set()
+            if self._reconnect_thread and self._reconnect_thread.is_alive():
+                self._reconnect_thread.join(timeout=2)
+            
             if self._client is not None:
                 try:
                     self._client.disconnect()
@@ -142,3 +157,53 @@ class PythonOpcUaDriver(BaseDriver):
                 except Exception:
                     logger.exception("subscribe_data_change failed for %s", nid)
             return {"sub": subscription, "handles": handles, "nodes": nodeid_list, "handler": handler}
+
+    def _start_reconnect_thread(self) -> None:
+        """Start the auto-reconnect thread."""
+        if self._reconnect_thread and self._reconnect_thread.is_alive():
+            return
+        
+        self._stop_reconnect.clear()
+        self._reconnect_thread = threading.Thread(
+            target=self._reconnect_loop, 
+            daemon=True,
+            name=f"opcua-reconnect-{id(self)}"
+        )
+        self._reconnect_thread.start()
+
+    def _reconnect_loop(self) -> None:
+        """Auto-reconnect loop that runs in a separate thread."""
+        while not self._stop_reconnect.is_set():
+            try:
+                # Check connection every 5 seconds
+                if self._stop_reconnect.wait(5):
+                    break
+                
+                if not self.is_connected():
+                    logger.warning("Connection lost, attempting to reconnect...")
+                    try:
+                        self._connect()
+                        logger.info("Successfully reconnected to OPC UA server")
+                    except Exception as e:
+                        logger.error(f"Reconnection failed: {e}")
+                        
+            except Exception as e:
+                logger.exception("Error in reconnect loop")
+                time.sleep(5)  # Wait before retrying
+
+    def connect(self) -> None:
+        """Connect to the OPC UA server."""
+        self._connect()
+
+    def disconnect(self) -> None:
+        """Disconnect from the OPC UA server."""
+        self._disconnect()
+
+    @contextmanager
+    def connect_context(self):
+        """Context manager to connect and disconnect automatically."""
+        self._connect()
+        try:
+            yield self
+        finally:
+            self._disconnect()
