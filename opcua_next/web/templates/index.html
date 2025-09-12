@@ -92,6 +92,11 @@
             font-size: 12px;
             color: #666;
         }
+        .node-value {
+            font-family: monospace;
+            font-size: 12px;
+            color: #0448ac;
+        }
         .data-stream {
             background-color: #f8f9fa;
             padding: 15px;
@@ -133,14 +138,6 @@
         <!-- Browse Section -->
         <div class="section">
             <h3>Browse Nodes</h3>
-            <div class="form-group">
-                <label for="depth">Depth:</label>
-                <select id="depth">
-                    <option value="1">1</option>
-                    <option value="2">2</option>
-                    <option value="3">3</option>
-                </select>
-            </div>
             <button onclick="browseNodes()" id="browseBtn" disabled>Browse</button>
             <div id="nodeTree" class="node-tree" style="display: none;">
                 <h4>Nodes:</h4>
@@ -262,9 +259,8 @@
 
         // Browse functions
         async function browseNodes() {
-            const depth = document.getElementById('depth').value;
             try {
-                const response = await fetch(`/api/browse?depth=${depth}`);
+                const response = await fetch(`/api/browse`);
                 const data = await response.json();
                 displayNodes(data.nodes);
             } catch (error) {
@@ -283,17 +279,46 @@
                 const nodeDiv = document.createElement('div');
                 nodeDiv.className = 'node-item';
                 nodeDiv.style.marginLeft = (level * 20) + 'px';
-                
-                nodeDiv.innerHTML = `
-                    <div><strong>${node.browse_name}</strong></div>
-                    <div class="node-id">${node.nodeid}</div>
-                `;
-                
-                container.appendChild(nodeDiv);
 
+                // Create expand/collapse button if there are children
+                let toggleBtn = null;
+                let childrenDiv = null;
                 if (node.children && node.children.length > 0) {
-                    displayNodes(node.children, container, level + 1);
+                    toggleBtn = document.createElement('span');
+                    toggleBtn.textContent = '▶';
+                    toggleBtn.style.cursor = 'pointer';
+                    toggleBtn.style.marginRight = '5px';
+
+                    childrenDiv = document.createElement('div');
+                    childrenDiv.style.display = 'none';
+
+                    // Recursively render children
+                    displayNodes(node.children, childrenDiv, level + 1);
+
+                    toggleBtn.onclick = function() {
+                        if (childrenDiv.style.display === 'none') {
+                            childrenDiv.style.display = 'block';
+                            toggleBtn.textContent = '▼';
+                        } else {
+                            childrenDiv.style.display = 'none';
+                            toggleBtn.textContent = '▶';
+                        }
+                    };
                 }
+
+                // Node label
+                const labelDiv = document.createElement('span');
+                labelDiv.innerHTML = `<strong>${node.browse_name}</strong> <span class="node-id">${node.nodeid}</span>`;
+                if (node.value !== undefined) {
+                    labelDiv.innerHTML += ` <span class="node-value"> ${node.value}</span>`;
+                }
+
+                // Assemble node
+                if (toggleBtn) nodeDiv.appendChild(toggleBtn);
+                nodeDiv.appendChild(labelDiv);
+
+                container.appendChild(nodeDiv);
+                if (childrenDiv) container.appendChild(childrenDiv);
             });
         }
 

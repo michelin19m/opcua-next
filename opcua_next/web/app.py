@@ -9,6 +9,7 @@ from fastapi.templating import Jinja2Templates
 from fastapi.requests import Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
+import pdb;
 
 from ..drivers.python_opcua_driver import PythonOpcUaDriver
 
@@ -102,14 +103,12 @@ async def get_status():
     return {"status": "disconnected"}
 
 
-@app.post("/api/browse")
+@app.get("/api/browse")
 async def browse_nodes(depth: int = 1):
     """Browse OPC UA nodes."""
     global current_driver
-    
     if not current_driver or not current_driver.is_connected():
         raise HTTPException(status_code=400, detail="Not connected to OPC UA server")
-    
     try:
         result = current_driver.browse_recursive(depth)
         return {"nodes": result}
@@ -121,7 +120,6 @@ async def browse_nodes(depth: int = 1):
 async def read_node(request: ReadRequest):
     """Read a value from an OPC UA node."""
     global current_driver
-    
     if not current_driver or not current_driver.is_connected():
         raise HTTPException(status_code=400, detail="Not connected to OPC UA server")
     

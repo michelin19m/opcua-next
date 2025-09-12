@@ -5,6 +5,7 @@ import threading
 import time
 from contextlib import contextmanager
 from typing import List, Dict, Optional, Union, Callable
+import pdb
 
 from opcua import Client
 
@@ -106,11 +107,9 @@ class PythonOpcUaDriver(BaseDriver):
     def browse_recursive(self, depth: int = 1) -> list:
         with self._lock:
             root = self._client.get_root_node()
-            return self._browse_node(root, depth)
-
-    def _browse_node(self, node, depth: int) -> list:
-        if depth <= 0:
-            return []
+            return self._browse_node(root)
+        
+    def _browse_node(self, node) -> list:
         result = []
         try:
             children = node.get_children()
@@ -125,8 +124,19 @@ class PythonOpcUaDriver(BaseDriver):
                 "browse_name": browse_name,
                 "nodeid": ch.nodeid.to_string(),
             }
-            if depth > 1:
-                entry["children"] = self._browse_node(ch, depth - 1)
+            # Only recurse if this node has children
+            try:
+                ch_children = ch.get_children()
+            except Exception:
+                ch_children = []
+            if ch_children:
+                entry["children"] = self._browse_node(ch)
+            else:
+                # Leaf node: try to get value
+                try:
+                    entry["value"] = ch.get_value()
+                except Exception:
+                    entry["value"] = None
             result.append(entry)
         return result
 
