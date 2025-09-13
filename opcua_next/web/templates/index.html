@@ -313,9 +313,19 @@
                     labelDiv.innerHTML += ` <span class="node-value"> ${node.value}</span>`;
                 }
 
-                // Assemble node
                 if (toggleBtn) nodeDiv.appendChild(toggleBtn);
                 nodeDiv.appendChild(labelDiv);
+
+                if (node.value !== undefined) {
+                    const checkbox = document.createElement('input');
+                    checkbox.type = 'checkbox';
+                    checkbox.className = 'subscribe-checkbox';
+                    checkbox.value = node.nodeid;
+                    checkbox.style.marginRight = '5px';
+                    nodeDiv.style.display = 'flex';
+                    nodeDiv.style.justifyContent = 'space-between';
+                    nodeDiv.appendChild(checkbox);
+                }
 
                 container.appendChild(nodeDiv);
                 if (childrenDiv) container.appendChild(childrenDiv);
@@ -379,12 +389,21 @@
         }
 
         function startDataStream() {
+            // Collect checked node IDs
+            const checked = Array.from(document.querySelectorAll('.subscribe-checkbox:checked'));
+            const nodeIds = checked.map(cb => cb.value);
+
+            if (nodeIds.length === 0) {
+                showError('Please select at least one node to subscribe.');
+                return;
+            }
+
             if (ws) {
                 ws.close();
             }
 
-            ws = new WebSocket('ws://localhost:8000/ws');
-            
+            ws = new WebSocket('ws://localhost:8000/ws?nodeids=' + encodeURIComponent(JSON.stringify(nodeIds)));
+
             ws.onopen = function() {
                 streaming = true;
                 document.getElementById('streamBtn').textContent = 'Stop Stream';
@@ -394,6 +413,7 @@
 
             ws.onmessage = function(event) {
                 const data = JSON.parse(event.data);
+                console.log('WebSocket message:', data);
                 if (data.type === 'data_change') {
                     addDataItem(data);
                 }
@@ -416,10 +436,10 @@
 
         function addDataItem(data) {
             const dataList = document.getElementById('dataList');
-            const item = document.createElement('div');
-            item.className = 'data-item';
-            item.innerHTML = `${new Date(data.timestamp * 1000).toLocaleTimeString()} - ${data.node_id}: ${JSON.stringify(data.value)}`;
-            dataList.insertBefore(item, dataList.firstChild);
+            const div = document.createElement('div');
+            div.className = 'data-item';
+            div.textContent = `[${new Date(data.timestamp * 1000).toLocaleTimeString()}] ${data.node_id}: ${data.value}`;
+            dataList.appendChild(div);
             
             // Keep only last 50 items
             while (dataList.children.length > 50) {

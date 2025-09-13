@@ -3,7 +3,7 @@
 import json
 import asyncio
 from typing import List, Dict, Optional
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.requests import Request
@@ -15,11 +15,18 @@ from ..drivers.python_opcua_driver import PythonOpcUaDriver
 
 
 app = FastAPI(title="OPC UA Next", description="OPC UA Toolkit Web UI")
-
+main_loop = asyncio.get_event_loop()
 # Templates
 templates = Jinja2Templates(directory="opcua_next/web/templates")
 
-# WebSocket connection manager
+
+
+import logging
+import threading
+
+logger = logging.getLogger("opcua_next")
+logger.setLevel(logging.DEBUG)
+
 class ConnectionManager:
     def __init__(self):
         self.active_connections: List[WebSocket] = []
@@ -27,19 +34,98 @@ class ConnectionManager:
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
         self.active_connections.append(websocket)
+        logger.debug("WebSocket connected. total=%d", len(self.active_connections))
 
     def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
+        try:
+            self.active_connections.remove(websocket)
+        except ValueError:
+            pass
+        logger.debug("WebSocket disconnected. total=%d", len(self.active_connections))
 
-    async def send_personal_message(self, message: str, websocket: WebSocket):
-        await websocket.send_text(message)
+    async def _safe_send(self, websocket: WebSocket, message: str):
+        try:
+            await websocket.send_text(message)
+            return None
+        except Exception as e:
+            logger.exception("Error sending to websocket")
+            return e
 
     async def broadcast(self, message: str):
-        for connection in self.active_connections:
-            try:
-                await connection.send_text(message)
-            except:
-                self.active_connections.remove(connection)
+        # Work on a snapshot so we can remove failing connections safely
+        conns = list(self.active_connections)
+        if not conns:
+            logger.debug("Broadcast called but no active connections")
+            return
+        # Try sending concurrently
+        tasks = [self._safe_send(c, message) for c in conns]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        # Remove failed connections
+        for conn, res in zip(conns, results):
+            if isinstance(res, Exception):
+                try:
+                    self.active_connections.remove(conn)
+                except ValueError:
+                    pass
+        logger.debug("Broadcasted message to %d sockets", len(conns))
+
+# --- websocket endpoint ---
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket, nodeids: Optional[str] = Query(None)):
+    await manager.connect(websocket)
+
+    # parse nodeids
+    nodeid_list = ["ns=2;i=1"]
+    if nodeids:
+        try:
+            nodeid_list = json.loads(nodeids)
+        except Exception:
+            logger.warning("Failed to parse nodeids query param, using default")
+
+    subscription_info = None
+
+    # If driver present, create subscription and capture the *running* loop
+    if current_driver and current_driver.is_connected():
+        loop = asyncio.get_running_loop()  # the correct running loop at this moment
+
+        def data_change_handler(node_id: str, value, data):
+            # build simple serializable message
+            import time
+            message = {
+                "type": "data_change",
+                "timestamp": time.time(),
+                "node_id": node_id,
+                # convert value to JSONable representation
+                "value": str(value)
+            }
+            payload = json.dumps(message)  # already str-ified value
+
+            # schedule the broadcast safely into the running loop
+            # use call_soon_threadsafe so it works from any thread
+            loop.call_soon_threadsafe(lambda: asyncio.create_task(manager.broadcast(payload)))
+            logger.debug("Scheduled broadcast for node %s (thread=%s)", node_id, threading.current_thread().name)
+
+        try:
+            subscription_info = current_driver.create_subscription(1000, nodeid_list, data_change_handler)
+            logger.debug("Subscription created: %r", subscription_info)
+        except Exception as e:
+            logger.exception("Failed to create subscription")
+            await manager.send_personal_message(json.dumps({"type": "error", "message": str(e)}), websocket)
+
+    try:
+        while True:
+            data = await websocket.receive_text()
+            # echo or some handling
+            await manager.send_personal_message(data, websocket)
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+        # if your driver exposes unsubscribe/cancel, do it here:
+        try:
+            if subscription_info and hasattr(current_driver, "delete_subscription"):
+                current_driver.delete_subscription(subscription_info)
+                logger.debug("Subscription deleted on disconnect")
+        except Exception:
+            logger.exception("Failed to delete subscription")
 
 
 manager = ConnectionManager()
@@ -139,7 +225,6 @@ async def write_node(request: WriteRequest):
         raise HTTPException(status_code=400, detail="Not connected to OPC UA server")
     
     try:
-        # Try to convert value to appropriate type
         try:
             typed_value = int(request.value)
         except ValueError:
@@ -152,43 +237,6 @@ async def write_node(request: WriteRequest):
         return {"node_id": request.node_id, "value": typed_value}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
-
-
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    """WebSocket endpoint for real-time data."""
-    await manager.connect(websocket)
-    
-    # Subscribe to data changes if connected
-    if current_driver and current_driver.is_connected():
-        def data_change_handler(node_id: str, value, data):
-            import time
-            message = {
-                "type": "data_change",
-                "timestamp": time.time(),
-                "node_id": node_id,
-                "value": value
-            }
-            asyncio.create_task(manager.broadcast(json.dumps(message)))
-        
-        # Subscribe to all readable nodes (simplified for demo)
-        try:
-            subscription_info = current_driver.create_subscription(
-                1000, ["ns=2;i=1"], data_change_handler  # Example node
-            )
-        except Exception as e:
-            await manager.send_personal_message(
-                json.dumps({"type": "error", "message": str(e)}), 
-                websocket
-            )
-    
-    try:
-        while True:
-            data = await websocket.receive_text()
-            # Echo back for now
-            await manager.send_personal_message(data, websocket)
-    except WebSocketDisconnect:
-        manager.disconnect(websocket)
 
 
 if __name__ == "__main__":
