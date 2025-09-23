@@ -8,3 +8,6 @@ fastapi
 uvicorn
 jinja2
 websockets
+psycopg[binary]
+psycopg2-binary
+sqlalchemy

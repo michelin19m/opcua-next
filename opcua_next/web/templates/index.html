@@ -130,9 +130,17 @@
                 <label for="endpoint">OPC UA Endpoint:</label>
                 <input type="text" id="endpoint" placeholder="opc.tcp://localhost:4840" value="opc.tcp://localhost:4840">
             </div>
+            <div class="form-group">
+                <input type="text" id="serverName" placeholder="Name (optional)">
+                <button onclick="saveServer()">Save Server</button>
+            </div>
             <button onclick="connect()">Connect</button>
             <button onclick="disconnect()">Disconnect</button>
             <div id="connectionStatus" class="status disconnected">Disconnected</div>
+            <div class="form-group">
+                <h4>Saved Servers</h4>
+                <div id="savedServers"></div>
+            </div>
         </div>
 
         <!-- Browse Section -->
@@ -168,6 +176,46 @@
             <div id="dataStream" class="data-stream" style="display: none;">
                 <h4>Live Data:</h4>
                 <div id="dataList"></div>
+            </div>
+        </div>
+
+        <!-- Historian Section -->
+        <div class="section">
+            <h3>Historian (TimescaleDB)</h3>
+            <div class="form-group">
+                <label for="histNodeIds">Node IDs (comma-separated):</label>
+                <input type="text" id="histNodeIds" placeholder="ns=2;i=1,ns=2;i=2">
+            </div>
+            <div class="form-group">
+                <label>Actions:</label>
+            </div>
+            <button onclick="saveSelectedTags()" id="saveTagsBtn" disabled>Save Selected Tags</button>
+            <div id="savedTags" style="margin-top:10px;"></div>
+        </div>
+
+        <!-- Trends Section -->
+        <div class="section">
+            <h3>Trends</h3>
+            <div class="form-group">
+                <label for="trendNodeId">Node ID:</label>
+                <input type="text" id="trendNodeId" placeholder="ns=2;i=1">
+            </div>
+            <div class="form-group">
+                <label for="trendStart">Start (ISO):</label>
+                <input type="text" id="trendStart" placeholder="2025-01-01T00:00:00+00:00">
+            </div>
+            <div class="form-group">
+                <label for="trendEnd">End (ISO):</label>
+                <input type="text" id="trendEnd" placeholder="2025-01-01T01:00:00+00:00">
+            </div>
+            <div class="form-group">
+                <label for="trendBucket">Bucket seconds (optional):</label>
+                <input type="number" id="trendBucket" placeholder="60">
+            </div>
+            <button onclick="loadTrends()" id="trendBtn" disabled>Load Trends</button>
+            <div id="trendResult" class="data-stream" style="display: none;">
+                <h4>Trend Data:</h4>
+                <div id="trendList"></div>
             </div>
         </div>
     </div>
@@ -227,6 +275,7 @@
                 } else {
                     disableControls();
                 }
+                await refreshServers();
             } catch (error) {
                 console.error('Status check error:', error);
             }
@@ -248,6 +297,8 @@
             document.getElementById('readBtn').disabled = false;
             document.getElementById('writeBtn').disabled = false;
             document.getElementById('streamBtn').disabled = false;
+            document.getElementById('saveTagsBtn').disabled = false;
+            document.getElementById('trendBtn').disabled = false;
         }
 
         function disableControls() {
@@ -255,6 +306,8 @@
             document.getElementById('readBtn').disabled = true;
             document.getElementById('writeBtn').disabled = true;
             document.getElementById('streamBtn').disabled = true;
+            document.getElementById('saveTagsBtn').disabled = true;
+            document.getElementById('trendBtn').disabled = true;
         }
 
         // Browse functions
@@ -321,6 +374,7 @@
                     checkbox.type = 'checkbox';
                     checkbox.className = 'subscribe-checkbox';
                     checkbox.value = node.nodeid;
+                    checkbox.dataset.path = node.path || node.nodeid;
                     checkbox.style.marginRight = '5px';
                     nodeDiv.style.display = 'flex';
                     nodeDiv.style.justifyContent = 'space-between';
@@ -456,6 +510,139 @@
             setTimeout(() => {
                 errorDiv.remove();
             }, 5000);
+        }
+
+        // Server list
+        async function refreshServers() {
+            const res = await fetch('/api/servers');
+            const data = await res.json();
+            const container = document.getElementById('savedServers');
+            container.innerHTML = '';
+            (data.servers || []).forEach(s => {
+                const row = document.createElement('div');
+                row.style.display = 'flex';
+                row.style.alignItems = 'center';
+                row.style.gap = '8px';
+                const label = document.createElement('span');
+                label.innerHTML = `<strong>${s.name || s.endpoint}</strong> <span class="node-id">${s.endpoint}</span>`;
+                const conn = document.createElement('button');
+                conn.textContent = 'Connect';
+                conn.onclick = async () => {
+                    await fetch('/api/connect', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({endpoint: s.endpoint}) });
+                    updateConnectionStatus(true);
+                    enableControls();
+                };
+                const disconn = document.createElement('button');
+                disconn.textContent = 'Disconnect';
+                disconn.onclick = async () => { await disconnect(); };
+                row.appendChild(label);
+                row.appendChild(conn);
+                row.appendChild(disconn);
+                container.appendChild(row);
+                // render saved tags as chips
+                if (s.tags && s.tags.length) {
+                    const chips = document.createElement('div');
+                    chips.style.marginLeft = '12px';
+                    s.tags.forEach(t => {
+                        const chip = document.createElement('span');
+                        chip.style.padding = '2px 8px';
+                        chip.style.border = '1px solid #ddd';
+                        chip.style.borderRadius = '999px';
+                        chip.style.marginRight = '6px';
+                        chip.textContent = t.path;
+                        const x = document.createElement('span');
+                        x.textContent = ' ×';
+                        x.style.cursor = 'pointer';
+                        x.onclick = async () => {
+                            const qs = new URLSearchParams({ node_id: t.node_id });
+                            await fetch(`/api/servers/${encodeURIComponent(s.id)}/tags?` + qs.toString(), { method: 'DELETE' });
+                            await refreshServers();
+                        };
+                        chip.appendChild(x);
+                        chips.appendChild(chip);
+                    });
+                    container.appendChild(chips);
+                }
+            });
+        }
+
+        async function saveServer() {
+            const endpoint = document.getElementById('endpoint').value;
+            const name = document.getElementById('serverName').value;
+            if (!endpoint) { showError('Enter endpoint'); return; }
+            await fetch('/api/servers', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({endpoint, name}) });
+            await refreshServers();
+        }
+
+        // Save selected tags
+        async function saveSelectedTags() {
+            const endpoint = document.getElementById('endpoint').value;
+            const checked = Array.from(document.querySelectorAll('.subscribe-checkbox:checked'));
+            if (!checked.length) { showError('Select at least one tag'); return; }
+            for (const cb of checked) {
+                const nodeId = cb.value;
+                const path = cb.dataset.path || nodeId;
+                await fetch('/api/tags', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ server_id: endpoint, node_id: nodeId, path })});
+            }
+            await refreshServers();
+        }
+
+        // Historian controls
+        async function startHistorian() {
+            const endpoint = document.getElementById('endpoint').value;
+            const nodeIdsStr = document.getElementById('histNodeIds').value || '';
+            const interval = parseInt(document.getElementById('histInterval').value || '1000', 10);
+            const node_ids = nodeIdsStr.split(',').map(s => s.trim()).filter(Boolean);
+            try {
+                const res = await fetch('/api/historian/start', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ endpoint, node_ids, interval_ms: interval })
+                });
+                if (!res.ok) {
+                    const err = await res.json();
+                    showError('Historian start failed: ' + err.detail);
+                }
+            } catch (e) {
+                showError('Historian start error: ' + e.message);
+            }
+        }
+
+        async function stopHistorian() {
+            try {
+                await fetch('/api/historian/stop', { method: 'POST' });
+            } catch (e) {
+                showError('Historian stop error: ' + e.message);
+            }
+        }
+
+        // Trends loader
+        async function loadTrends() {
+            const nodeId = document.getElementById('trendNodeId').value;
+            const start = document.getElementById('trendStart').value;
+            const end = document.getElementById('trendEnd').value;
+            const bucket = document.getElementById('trendBucket').value;
+            if (!nodeId || !start || !end) {
+                showError('Please fill node id, start and end');
+                return;
+            }
+            const qs = new URLSearchParams({ node_id: nodeId, start, end });
+            if (bucket) qs.append('bucket_seconds', bucket);
+            try {
+                const res = await fetch('/api/trends?' + qs.toString());
+                const data = await res.json();
+                const list = document.getElementById('trendList');
+                list.innerHTML = '';
+                (data.data || []).forEach(d => {
+                    const div = document.createElement('div');
+                    div.className = 'data-item';
+                    div.textContent = `${d.timestamp} - ${JSON.stringify(d.value)}`;
+                    list.appendChild(div);
+                });
+                document.getElementById('trendResult').style.display = 'block';
+            } catch (e) {
+                showError('Trend load error: ' + e.message);
+            }
         }
 
         // Initialize

@@ -14,7 +14,7 @@ def ls(endpoint: str, depth: int = 1):
     try:
         with driver.connect_context():
             result = driver.browse_recursive(depth=depth)
-            typer.echo(json.dumps(result, indent=2))
+            typer.echo(json.dumps(result, indent=2, default=str))
     except Exception as e:
         typer.echo(f"Error connecting to {endpoint}: {e}", err=True)
         sys.exit(1)

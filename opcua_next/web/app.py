@@ -12,6 +12,9 @@ from pydantic import BaseModel
 import pdb;
 
 from ..drivers.python_opcua_driver import PythonOpcUaDriver
+from ..storage.timescale import TimescaleStorage
+from ..core.historian import HistorianManager
+from ..core.state import StateStore
 
 
 app = FastAPI(title="OPC UA Next", description="OPC UA Toolkit Web UI")
@@ -130,8 +133,11 @@ async def websocket_endpoint(websocket: WebSocket, nodeids: Optional[str] = Quer
 
 manager = ConnectionManager()
 
-# Global driver instance
+# Global driver instance and historian
 current_driver: Optional[PythonOpcUaDriver] = None
+storage = TimescaleStorage()
+historian = HistorianManager(storage)
+state = StateStore()
 
 
 class ConnectRequest(BaseModel):
@@ -162,6 +168,16 @@ async def connect_endpoint(request: ConnectRequest):
     try:
         current_driver = PythonOpcUaDriver(request.endpoint, request.security)
         current_driver.connect()
+        # upsert server in state
+        saved = state.upsert_server(request.endpoint)
+        # auto-start historian for saved tags if any
+        tags = saved.get("tags", [])
+        if tags:
+            node_ids = [t["node_id"] for t in tags]
+            try:
+                historian.start(request.endpoint, node_ids, 1000)
+            except Exception:
+                pass
         return {"status": "connected", "endpoint": request.endpoint}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -188,16 +204,80 @@ async def get_status():
         return {"status": "connected", "endpoint": current_driver.endpoint}
     return {"status": "disconnected"}
 
+# ---- Saved servers / tags API ----
+
+class ServerRequest(BaseModel):
+    endpoint: str
+    name: Optional[str] = None
+
+
+@app.get("/api/servers")
+async def list_servers():
+    return {"servers": state.list_servers()}
+
+
+@app.post("/api/servers")
+async def add_server(req: ServerRequest):
+    saved = state.upsert_server(req.endpoint, req.name)
+    return saved
+
+
+@app.delete("/api/servers/{server_id}")
+async def delete_server(server_id: str):
+    state.delete_server(server_id)
+    return {"status": "deleted"}
+
+
+class TagRequest(BaseModel):
+    server_id: str
+    node_id: str
+    path: str
+
+
+@app.get("/api/servers/{server_id}/tags")
+async def list_tags(server_id: str):
+    return {"tags": state.list_tags(server_id)}
+
+
+@app.post("/api/tags")
+async def add_tag(req: TagRequest):
+    state.add_tag(req.server_id, req.node_id, req.path)
+    # Auto (re)start historian for this server's saved tags
+    try:
+        tags = state.list_tags(req.server_id)
+        node_ids = [t["node_id"] for t in tags]
+        historian.stop()
+        if node_ids:
+            historian.start(req.server_id, node_ids, 1000)
+    except Exception:
+        pass
+    return {"status": "ok"}
+
+
+@app.delete("/api/servers/{server_id}/tags")
+async def remove_tag(server_id: str, node_id: str):
+    state.remove_tag(server_id, node_id)
+    # Auto (re)start historian reflecting removal
+    try:
+        tags = state.list_tags(server_id)
+        node_ids = [t["node_id"] for t in tags]
+        historian.stop()
+        if node_ids:
+            historian.start(server_id, node_ids, 1000)
+    except Exception:
+        pass
+    return {"status": "deleted"}
+
 
 @app.get("/api/browse")
-async def browse_nodes(depth: int = 1):
+async def browse_nodes(depth: int = 3):
     """Browse OPC UA nodes."""
     global current_driver
     if not current_driver or not current_driver.is_connected():
         raise HTTPException(status_code=400, detail="Not connected to OPC UA server")
     try:
         result = current_driver.browse_recursive(depth)
-        return {"nodes": result}
+        return json.loads(json.dumps({"nodes": result}, default=str))
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -242,3 +322,39 @@ async def write_node(request: WriteRequest):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
+# Historian endpoints
+class HistorianStartRequest(BaseModel):
+    endpoint: str
+    node_ids: List[str]
+    interval_ms: int = 1000
+
+
+@app.post("/api/historian/start")
+async def historian_start(req: HistorianStartRequest):
+    try:
+        historian.start(req.endpoint, req.node_ids, req.interval_ms)
+        return {"status": "started", "count": len(req.node_ids)}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/historian/stop")
+async def historian_stop():
+    try:
+        historian.stop()
+        return {"status": "stopped"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/trends")
+async def trends(node_id: str, start: str, end: str, bucket_seconds: Optional[int] = None):
+    from datetime import datetime
+    try:
+        s = datetime.fromisoformat(start)
+        e = datetime.fromisoformat(end)
+        data = storage.query_range(node_id, s, e, bucket_seconds)
+        return {"node_id": node_id, "data": data}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))

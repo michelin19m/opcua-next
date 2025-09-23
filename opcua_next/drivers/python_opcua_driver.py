@@ -106,10 +106,16 @@ class PythonOpcUaDriver(BaseDriver):
 
     def browse_recursive(self, depth: int = 1) -> list:
         with self._lock:
-            root = self._client.get_root_node()
-            return self._browse_node(root)
-        
-    def _browse_node(self, node) -> list:
+            # Start from Objects folder instead of Root to avoid only 3 top-level nodes
+            try:
+                start_node = self._client.get_objects_node()
+            except Exception:
+                start_node = self._client.get_root_node()
+            return self._browse_node(start_node, depth, path_prefix=["Objects"])
+
+    def _browse_node(self, node, depth: int, path_prefix: list[str]) -> list:
+        if depth <= 0:
+            return []
         result = []
         try:
             children = node.get_children()
@@ -123,20 +129,25 @@ class PythonOpcUaDriver(BaseDriver):
             entry = {
                 "browse_name": browse_name,
                 "nodeid": ch.nodeid.to_string(),
+                "path": "/".join(path_prefix + [str(browse_name)])
             }
-            # Only recurse if this node has children
+            # Try to include node class and value (best-effort)
             try:
-                ch_children = ch.get_children()
+                node_class = ch.get_node_class()
+                entry["node_class"] = getattr(node_class, "name", str(node_class))
             except Exception:
-                ch_children = []
-            if ch_children:
-                entry["children"] = self._browse_node(ch)
-            else:
-                # Leaf node: try to get value
-                try:
-                    entry["value"] = ch.get_value()
-                except Exception:
-                    entry["value"] = None
+                pass
+            if depth > 1:
+                entry["children"] = self._browse_node(ch, depth - 1, path_prefix + [str(browse_name)])
+            # For variables, attempt value fetch
+            try:
+                if entry.get("node_class", "").lower().startswith("variable"):
+                    try:
+                        entry["value"] = ch.get_value()
+                    except Exception:
+                        entry["value"] = None
+            except Exception:
+                pass
             result.append(entry)
         return result
 
