@@ -1,0 +1,30 @@
+<div class="section">
+    <h3>Trends</h3>
+    <div class="form-group">
+        <label for="trendNodeId">Saved Tag:</label>
+        <select id="trendNodeId"></select>
+    </div>
+    <div class="form-group">
+        <label for="trendStart">Start (ISO):</label>
+        <input type="text" id="trendStart" placeholder="2025-01-01T00:00:00+00:00">
+    </div>
+    <div class="form-group">
+        <label for="trendEnd">End (ISO):</label>
+        <input type="text" id="trendEnd" placeholder="2025-01-01T01:00:00+00:00">
+    </div>
+    <div class="form-group">
+        <label for="trendBucket">Bucket seconds (optional):</label>
+        <input type="number" id="trendBucket" placeholder="60">
+    </div>
+    <button onclick="loadTrends()" id="trendBtn" disabled>Load Trends</button>
+    <div class="form-group" style="margin-top:10px;">
+        <label>Quick: last N values</label>
+        <input type="number" id="trendLastN" value="10" style="width:80px;">
+        <button onclick="loadLastN()" id="trendLastBtn" disabled>Plot last N</button>
+    </div>
+    <div id="trendResult" class="data-stream" style="display: none;">
+        <h4>Trend Data:</h4>
+        <div id="trendList"></div>
+        <div id="trendPlot" style="width:100%; height:360px; margin-top:10px;"></div>
+    </div>
+</div>

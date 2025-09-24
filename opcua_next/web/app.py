@@ -18,7 +18,9 @@ from ..core.historian import HistorianManager
 from ..core.state import StateStore
 
 
+
 app = FastAPI(title="OPC UA Next", description="OPC UA Toolkit Web UI")
+app.mount("/static", StaticFiles(directory="opcua_next/web/static"), name="static")
 main_loop = asyncio.get_event_loop()
 # Templates
 templates = Jinja2Templates(directory="opcua_next/web/templates")
@@ -225,6 +227,18 @@ async def add_server(req: ServerRequest):
 
 @app.delete("/api/servers/{server_id}")
 async def delete_server(server_id: str):
+    # Delete historian data for all tags of this server
+    tags = state.list_tags(server_id)
+    try:
+        storage.delete_by_node_ids([t["node_id"] for t in tags])
+    except Exception:
+        pass
+    # Stop historian if it was running for this server
+    try:
+        if hasattr(historian, "stop"):
+            historian.stop()
+    except Exception:
+        pass
     state.delete_server(server_id)
     return {"status": "deleted"}
 
@@ -258,6 +272,10 @@ async def add_tag(req: TagRequest):
 @app.delete("/api/servers/{server_id}/tags")
 async def remove_tag(server_id: str, node_id: str):
     state.remove_tag(server_id, node_id)
+    try:
+        storage.delete_by_node_ids([node_id])
+    except Exception:
+        pass
     # Auto (re)start historian reflecting removal
     try:
         tags = state.list_tags(server_id)

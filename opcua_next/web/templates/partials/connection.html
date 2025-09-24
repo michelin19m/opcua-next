@@ -1,0 +1,18 @@
+<div class="section">
+    <h3>Connection</h3>
+    <div class="form-group">
+        <label for="endpoint">OPC UA Endpoint:</label>
+        <input type="text" id="endpoint" placeholder="opc.tcp://localhost:4840" value="opc.tcp://localhost:4840">
+    </div>
+    <div class="form-group">
+        <input type="text" id="serverName" placeholder="Name (optional)">
+        <button onclick="saveServer()">Save Server</button>
+    </div>
+    <button onclick="connect()">Connect</button>
+    <button onclick="disconnect()">Disconnect</button>
+    <div id="connectionStatus" class="status disconnected">Disconnected</div>
+    <div class="form-group">
+        <h4>Saved Servers</h4>
+        <div id="savedServers"></div>
+    </div>
+</div>

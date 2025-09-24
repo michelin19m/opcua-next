@@ -131,6 +131,18 @@ class TimescaleStorage:
                     {"timestamp": r[0].isoformat(), "node_id": node_id, "value": r[1]}
                     for r in rows
                 ]
+    
+    def delete_by_node_ids(self, node_ids: List[str]) -> int:
+        if not node_ids:
+            return 0
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM measurements WHERE node_id = ANY(%s)",
+                    (node_ids,)
+                )
+                # rowcount may be -1 depending on driver settings; ignore
+                return cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
                 
 
 

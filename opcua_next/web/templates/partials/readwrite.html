@@ -1,0 +1,14 @@
+<div class="section">
+    <h3>Read/Write</h3>
+    <div class="form-group">
+        <label for="readNodeId">Node ID:</label>
+        <input type="text" id="readNodeId" placeholder="ns=2;i=1">
+    </div>
+    <button onclick="readNode()" id="readBtn" disabled>Read</button>
+    <div class="form-group">
+        <label for="writeValue">Value:</label>
+        <input type="text" id="writeValue" placeholder="Enter value">
+    </div>
+    <button onclick="writeNode()" id="writeBtn" disabled>Write</button>
+    <div id="readResult"></div>
+</div>
