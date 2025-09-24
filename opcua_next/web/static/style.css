@@ -84,7 +84,7 @@ button:disabled {
 .node-item {
     display: flex;
     align-items: center;
-    padding: 8px 0;
+    padding: 8px 4px;
     border-radius: 8px;
     margin-bottom: 2px;
     transition: background 0.18s, box-shadow 0.18s;
