@@ -89,7 +89,6 @@ function disableControls() {
     document.getElementById('trendLastBtn').disabled = true;
 }
 
-// Browse functions
 async function browseNodes() {
     try {
         const response = await fetch(`/api/browse`);
@@ -106,28 +105,39 @@ function displayNodes(nodes, container = null, level = 0) {
         container.innerHTML = '';
         document.getElementById('nodeTree').style.display = 'block';
     }
+    document.createElement('div');
 
     nodes.forEach(node => {
+        const nodeWrapper = document.createElement('div');
+        nodeWrapper.className = 'node-wrapper';
+        nodeWrapper.style.marginLeft = (level * 10) + 'px';
+        if (level > 0) {
+            nodeWrapper.style.borderLeft = '1px solid #e0e7ef';
+            nodeWrapper.style.paddingLeft = '12px';
+        }
+
         const nodeDiv = document.createElement('div');
         nodeDiv.className = 'node-item';
-        nodeDiv.style.marginLeft = (level * 20) + 'px';
 
-        // Create expand/collapse button if there are children
+        const contentWrapper = document.createElement('div');
+        contentWrapper.style.display = 'flex';
+        contentWrapper.style.alignItems = 'center';
+
         let toggleBtn = null;
         let childrenDiv = null;
         if (node.children && node.children.length > 0) {
             toggleBtn = document.createElement('span');
             toggleBtn.textContent = '▶';
+            toggleBtn.className = 'expand';
             toggleBtn.style.cursor = 'pointer';
-            toggleBtn.style.marginRight = '5px';
+            toggleBtn.style.marginRight = '8px';
 
             childrenDiv = document.createElement('div');
             childrenDiv.style.display = 'none';
 
-            // Recursively render children
             displayNodes(node.children, childrenDiv, level + 1);
 
-            toggleBtn.onclick = function() {
+            nodeDiv.onclick = function() {
                 if (childrenDiv.style.display === 'none') {
                     childrenDiv.style.display = 'block';
                     toggleBtn.textContent = '▼';
@@ -136,32 +146,44 @@ function displayNodes(nodes, container = null, level = 0) {
                     toggleBtn.textContent = '▶';
                 }
             };
+
+            contentWrapper.appendChild(toggleBtn);
         }
 
-        // Node label
         const labelDiv = document.createElement('span');
+        labelDiv.className = 'node-label';
         labelDiv.innerHTML = `<strong>${node.browse_name}</strong> <span class="node-id">${node.nodeid}</span>`;
         if (node.value !== undefined) {
-            labelDiv.innerHTML += ` <span class="node-value"> ${node.value}</span>`;
+            labelDiv.innerHTML += ` <span class="node-value">${node.value}</span>`;
         }
+        contentWrapper.appendChild(labelDiv);
 
-        if (toggleBtn) nodeDiv.appendChild(toggleBtn);
-        nodeDiv.appendChild(labelDiv);
+        nodeDiv.appendChild(contentWrapper);
 
         if (node.value !== undefined) {
             const checkbox = document.createElement('input');
             checkbox.type = 'checkbox';
             checkbox.className = 'subscribe-checkbox';
             checkbox.value = node.nodeid;
-            checkbox.dataset.path = node.path || node.nodeid;
-            checkbox.style.marginRight = '5px';
-            nodeDiv.style.display = 'flex';
-            nodeDiv.style.justifyContent = 'space-between';
+            checkbox.style.marginLeft = 'auto';
             nodeDiv.appendChild(checkbox);
+            nodeDiv.classList.add('node-leaf');
+            if (!(node.children && node.children.length > 0)) {
+                nodeDiv.onclick = function(e) {
+                    if (e.target !== checkbox) {
+                        checkbox.checked = !checkbox.checked;
+                    }
+                }
+            }
         }
 
-        container.appendChild(nodeDiv);
-        if (childrenDiv) container.appendChild(childrenDiv);
+        nodeWrapper.appendChild(nodeDiv);
+
+        container.appendChild(nodeWrapper);
+
+        if (childrenDiv) {
+            nodeWrapper.appendChild(childrenDiv);
+        }
     });
 }
 
