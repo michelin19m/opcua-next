@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>OPC UA Next - Web UI</title>
+    <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -101,7 +102,6 @@
             background-color: #f8f9fa;
             padding: 15px;
             border-radius: 4px;
-            max-height: 300px;
             overflow-y: auto;
         }
         .data-item {
@@ -197,8 +197,8 @@
         <div class="section">
             <h3>Trends</h3>
             <div class="form-group">
-                <label for="trendNodeId">Node ID:</label>
-                <input type="text" id="trendNodeId" placeholder="ns=2;i=1">
+                <label for="trendNodeId">Saved Tag:</label>
+                <select id="trendNodeId"></select>
             </div>
             <div class="form-group">
                 <label for="trendStart">Start (ISO):</label>
@@ -213,9 +213,15 @@
                 <input type="number" id="trendBucket" placeholder="60">
             </div>
             <button onclick="loadTrends()" id="trendBtn" disabled>Load Trends</button>
+            <div class="form-group" style="margin-top:10px;">
+                <label>Quick: last N values</label>
+                <input type="number" id="trendLastN" value="10" style="width:80px;">
+                <button onclick="loadLastN()" id="trendLastBtn" disabled>Plot last N</button>
+            </div>
             <div id="trendResult" class="data-stream" style="display: none;">
                 <h4>Trend Data:</h4>
                 <div id="trendList"></div>
+                <div id="trendPlot" style="width:100%; height:360px; margin-top:10px;"></div>
             </div>
         </div>
     </div>
@@ -299,6 +305,7 @@
             document.getElementById('streamBtn').disabled = false;
             document.getElementById('saveTagsBtn').disabled = false;
             document.getElementById('trendBtn').disabled = false;
+            document.getElementById('trendLastBtn').disabled = false;
         }
 
         function disableControls() {
@@ -308,6 +315,7 @@
             document.getElementById('streamBtn').disabled = true;
             document.getElementById('saveTagsBtn').disabled = true;
             document.getElementById('trendBtn').disabled = true;
+            document.getElementById('trendLastBtn').disabled = true;
         }
 
         // Browse functions
@@ -543,6 +551,9 @@
                 if (s.tags && s.tags.length) {
                     const chips = document.createElement('div');
                     chips.style.marginLeft = '12px';
+                    // Fill trend selector with saved tags for the first server (or merge)
+                    const sel = document.getElementById('trendNodeId');
+                    sel.innerHTML = '';
                     s.tags.forEach(t => {
                         const chip = document.createElement('span');
                         chip.style.padding = '2px 8px';
@@ -550,6 +561,10 @@
                         chip.style.borderRadius = '999px';
                         chip.style.marginRight = '6px';
                         chip.textContent = t.path;
+                        const opt = document.createElement('option');
+                        opt.value = t.node_id;
+                        opt.textContent = t.path;
+                        sel.appendChild(opt);
                         const x = document.createElement('span');
                         x.textContent = ' ×';
                         x.style.cursor = 'pointer';
@@ -640,9 +655,59 @@
                     list.appendChild(div);
                 });
                 document.getElementById('trendResult').style.display = 'block';
+                // Clear plot when loading raw data
+                const plotDiv = document.getElementById('trendPlot');
+                if (plotDiv) { plotDiv.innerHTML = ''; }
             } catch (e) {
                 showError('Trend load error: ' + e.message);
             }
+        }
+
+        async function loadLastN() {
+            const nodeId = document.getElementById('trendNodeId').value;
+            const n = parseInt(document.getElementById('trendLastN').value || '10', 10);
+            if (!nodeId) { showError('Select a saved tag'); return; }
+            document.getElementById('trendResult').style.display = 'block';
+            try {
+                const res = await fetch(`/api/trends/last?node_id=${encodeURIComponent(nodeId)}&n=${n}`);
+                const j = await res.json();
+                const xs = (j.data || []).map(d => d.timestamp);
+                const ys = (j.data || []).map(d => {
+                    const v = d.value;
+                    const f = parseFloat(v);
+                    return Number.isFinite(f) ? f : null;
+                });
+                renderPlot(xs, ys, `${nodeId} (last ${n})`);
+            } catch (e) {
+                showError('Trend plot error: ' + e.message);
+            }
+        }
+
+        function renderPlot(xs, ys, title) {
+            const plotDiv = document.getElementById('trendPlot');
+            const trace = {
+                x: xs,
+                y: ys,
+                mode: 'lines+markers',
+                name: 'OPC UA Value',
+                hovertemplate: '%{x|%Y-%m-%d %H:%M:%S}<br>Value=%{y}<extra></extra>'
+            };
+            const layout = {
+                title: title || 'Trend',
+                xaxis: {
+                    title: 'Time',
+                    showgrid: true,
+                    gridcolor: 'rgba(200,200,200,0.3)'
+                },
+                yaxis: {
+                    title: 'Value',
+                    showgrid: true,
+                    gridcolor: 'rgba(200,200,200,0.3)'
+                },
+                template: 'plotly_white',
+                legend: { orientation: 'h', yanchor: 'bottom', y: 1.02, xanchor: 'right', x: 1 }
+            };
+            Plotly.newPlot(plotDiv, [trace], layout, {responsive: true, displaylogo: false});
         }
 
         // Initialize

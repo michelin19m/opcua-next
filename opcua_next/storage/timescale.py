@@ -112,4 +112,25 @@ class TimescaleStorage:
                         for r in rows
                     ]
 
+    def query_last_n(self, node_id: str, n: int) -> List[Dict]:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT time, value
+                    FROM measurements
+                    WHERE node_id = %s
+                    ORDER BY time DESC
+                    LIMIT %s
+                    """,
+                    (node_id, n),
+                )
+                rows = cur.fetchall()
+                rows.reverse()
+                return [
+                    {"timestamp": r[0].isoformat(), "node_id": node_id, "value": r[1]}
+                    for r in rows
+                ]
+                
+
 

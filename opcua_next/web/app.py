@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.requests import Request
 from fastapi.responses import HTMLResponse
+from fastapi.responses import Response
 from pydantic import BaseModel
 import pdb;
 
@@ -356,5 +357,57 @@ async def trends(node_id: str, start: str, end: str, bucket_seconds: Optional[in
         e = datetime.fromisoformat(end)
         data = storage.query_range(node_id, s, e, bucket_seconds)
         return {"node_id": node_id, "data": data}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/trends/last")
+async def trends_last(node_id: str, n: int = 10):
+    try:
+        data = storage.query_last_n(node_id, n)
+        return {"node_id": node_id, "data": data}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/trends/plot.png")
+async def trends_plot(node_id: str, n: int = 10):
+    try:
+        import matplotlib
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+        import io
+
+        series = storage.query_last_n(node_id, n)
+        if not series:
+            # return empty image
+            fig, ax = plt.subplots(figsize=(6,2))
+            ax.set_title('No data')
+            buf = io.BytesIO()
+            fig.savefig(buf, format='png', bbox_inches='tight')
+            plt.close(fig)
+            return Response(content=buf.getvalue(), media_type='image/png')
+
+        xs = [s['timestamp'] for s in series]
+        ys = []
+        for s in series:
+            v = s['value']
+            try:
+                ys.append(float(v))
+            except Exception:
+                ys.append(float('nan'))
+
+        fig, ax = plt.subplots(figsize=(8,3))
+        ax.plot(xs, ys, marker='o')
+        ax.set_title(f"{node_id} (last {n})")
+        ax.set_xlabel('time')
+        ax.set_ylabel('value')
+        ax.grid(True, alpha=0.3)
+        plt.xticks(rotation=45, ha='right')
+
+        buf = io.BytesIO()
+        fig.savefig(buf, format='png', bbox_inches='tight')
+        plt.close(fig)
+        return Response(content=buf.getvalue(), media_type='image/png')
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

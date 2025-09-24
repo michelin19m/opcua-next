@@ -9,5 +9,6 @@ uvicorn
 jinja2
 websockets
 psycopg[binary]
+matplotlib
 psycopg2-binary
 sqlalchemy
